@@ -7,10 +7,11 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// 中间件
+// 中间件 - 大幅增加请求体大小限制
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 设置更大的请求体限制，比如50MB，以应对大量商品包含图片的情况
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // MongoDB 连接
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/weapp';
@@ -64,11 +65,10 @@ function cleanImageURL(url) {
 
 // API 路由
 
-// 获取所有商品列表（全局）- 添加详细日志
+// 获取所有商品列表（全局）
 app.get('/api/goods', async (req, res) => {
   try {
     console.log('收到获取商品列表请求');
-    // 按创建时间排序，确保顺序一致
     const goods = await Goods.find().sort({ createdAt: 1 });
     console.log(`数据库中找到 ${goods.length} 个商品`);
     
@@ -87,7 +87,7 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表（全局）- 添加详细日志和错误处理
+// 保存商品列表（全局）
 app.post('/api/goods', async (req, res) => {
   try {
     console.log('收到保存商品列表请求');
@@ -195,43 +195,13 @@ app.post('/api/config', async (req, res) => {
   }
 });
 
-// 数据清理接口 - 用于清理数据库中的无效数据
-app.post('/api/cleanup', async (req, res) => {
-  try {
-    console.log('执行数据清理');
-    
-    // 清理商品数据中的无效图片URL
-    const goods = await Goods.find({});
-    let updatedCount = 0;
-    
-    for (let good of goods) {
-      if (!isBase64Image(good.image)) {
-        good.image = cleanImageURL(good.image);
-        await good.save();
-        updatedCount++;
-      }
-    }
-    
-    console.log(`清理了 ${updatedCount} 个商品的无效图片URL`);
-    res.json({ message: `Cleaned up ${updatedCount} items` });
-  } catch (error) {
-    console.error('数据清理失败:', error);
-    res.status(500).json({ error: 'Cleanup failed' });
-  }
-});
-
 // 图片上传 - 现在将图片转换为Base64存储
 app.post('/api/upload', (req, res) => {
   console.log('收到图片上传请求');
   
-  // 检查是否有文件上传
-  if (!req.headers['content-type'] || !req.headers['content-type'].startsWith('multipart/form-data')) {
-    return res.status(400).json({ error: 'Please upload as form data' });
-  }
-
-  // 使用multer中间件处理文件上传
+  // 为图片上传接口单独设置一个合理的大小限制
   const upload = multer({ 
-    limits: { fileSize: 5 * 1024 * 1024 } // 限制文件大小为5MB
+    limits: { fileSize: 5 * 1024 * 1024 } // 限制单个文件大小为5MB
   }).single('image');
 
   upload(req, res, (err) => {
