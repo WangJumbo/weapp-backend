@@ -64,16 +64,22 @@ function cleanImageURL(url) {
 
 // API 路由
 
-// 获取所有商品列表（全局）
+// 获取所有商品列表（全局）- 添加详细日志
 app.get('/api/goods', async (req, res) => {
   try {
-    const goods = await Goods.find().sort({ updatedAt: -1 });
+    console.log('收到获取商品列表请求');
+    // 按创建时间排序，确保顺序一致
+    const goods = await Goods.find().sort({ createdAt: 1 });
+    console.log(`数据库中找到 ${goods.length} 个商品`);
+    
     // 确保返回的图片都是Base64格式，清理无效图片URL
     const processedGoods = goods.map(good => {
       const cleanedGood = good.toObject();
       cleanedGood.image = cleanImageURL(cleanedGood.image);
       return cleanedGood;
     });
+    
+    console.log(`处理后返回 ${processedGoods.length} 个商品`);
     res.json({ data: processedGoods });
   } catch (error) {
     console.error('获取商品列表失败:', error);
@@ -81,24 +87,45 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表（全局）
+// 保存商品列表（全局）- 添加详细日志和错误处理
 app.post('/api/goods', async (req, res) => {
   try {
+    console.log('收到保存商品列表请求');
     const { goodsList } = req.body;
     
-    // 清空所有现有商品
-    await Goods.deleteMany({});
-    
-    // 批量插入新商品，确保图片是Base64格式
-    if (goodsList && goodsList.length > 0) {
-      const processedGoodsList = goodsList.map(good => ({
-        ...good,
-        image: isBase64Image(good.image) ? good.image : cleanImageURL(good.image),
-        updatedAt: new Date()
-      }));
-      await Goods.insertMany(processedGoodsList);
+    if (!goodsList || !Array.isArray(goodsList)) {
+      console.log('无效的商品列表格式:', goodsList);
+      return res.status(400).json({ error: 'Invalid goods list format' });
     }
     
+    console.log(`准备保存 ${goodsList.length} 个商品`);
+    
+    // 开启事务以确保数据一致性
+    const session = await mongoose.startSession();
+    await session.withTransaction(async () => {
+      // 清空所有现有商品
+      const deleteResult = await Goods.deleteMany({}, { session });
+      console.log(`删除了 ${deleteResult.deletedCount} 个旧商品`);
+      
+      // 批量插入新商品，确保图片是Base64格式
+      if (goodsList && goodsList.length > 0) {
+        const processedGoodsList = goodsList.map(good => ({
+          id: good.id,
+          name: good.name,
+          score: good.score,
+          desc: good.desc,
+          image: isBase64Image(good.image) ? good.image : cleanImageURL(good.image),
+          createdAt: good.createdAt || new Date(),
+          updatedAt: new Date()
+        }));
+        
+        const insertResult = await Goods.insertMany(processedGoodsList, { session });
+        console.log(`成功插入 ${insertResult.length} 个新商品`);
+      }
+    });
+    await session.endSession();
+    
+    console.log('商品列表保存完成');
     res.json({ message: 'Goods saved successfully' });
   } catch (error) {
     console.error('保存商品列表失败:', error);
@@ -109,10 +136,11 @@ app.post('/api/goods', async (req, res) => {
 // 获取全局配置
 app.get('/api/config', async (req, res) => {
   try {
+    console.log('收到获取配置请求');
     // 不需要openid，获取全局配置
     let config = await Config.findOne({ id: 'global_config' });
     if (!config) {
-      // 如果没有全局配置，则创建默认配置
+      console.log('未找到全局配置，创建默认配置');
       config = new Config({ id: 'global_config' });
       await config.save();
     }
@@ -122,6 +150,7 @@ app.get('/api/config', async (req, res) => {
     // 确保返回的图片都是Base64格式
     bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
     
+    console.log('返回配置信息');
     res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
   } catch (error) {
     console.error('获取配置失败:', error);
@@ -132,6 +161,7 @@ app.get('/api/config', async (req, res) => {
 // 保存全局配置
 app.post('/api/config', async (req, res) => {
   try {
+    console.log('收到保存配置请求');
     const { bannerImage, bannerTitle, ruleList } = req.body;
     
     let config = await Config.findOne({ id: 'global_config' });
@@ -145,6 +175,7 @@ app.post('/api/config', async (req, res) => {
       if (ruleList !== undefined) config.ruleList = ruleList;
       config.updatedAt = new Date();
       await config.save();
+      console.log('更新现有配置');
     } else {
       // 创建新配置
       config = new Config({
@@ -154,6 +185,7 @@ app.post('/api/config', async (req, res) => {
         ruleList
       });
       await config.save();
+      console.log('创建新配置');
     }
     
     res.json({ message: 'Config saved successfully' });
@@ -163,8 +195,35 @@ app.post('/api/config', async (req, res) => {
   }
 });
 
+// 数据清理接口 - 用于清理数据库中的无效数据
+app.post('/api/cleanup', async (req, res) => {
+  try {
+    console.log('执行数据清理');
+    
+    // 清理商品数据中的无效图片URL
+    const goods = await Goods.find({});
+    let updatedCount = 0;
+    
+    for (let good of goods) {
+      if (!isBase64Image(good.image)) {
+        good.image = cleanImageURL(good.image);
+        await good.save();
+        updatedCount++;
+      }
+    }
+    
+    console.log(`清理了 ${updatedCount} 个商品的无效图片URL`);
+    res.json({ message: `Cleaned up ${updatedCount} items` });
+  } catch (error) {
+    console.error('数据清理失败:', error);
+    res.status(500).json({ error: 'Cleanup failed' });
+  }
+});
+
 // 图片上传 - 现在将图片转换为Base64存储
 app.post('/api/upload', (req, res) => {
+  console.log('收到图片上传请求');
+  
   // 检查是否有文件上传
   if (!req.headers['content-type'] || !req.headers['content-type'].startsWith('multipart/form-data')) {
     return res.status(400).json({ error: 'Please upload as form data' });
@@ -182,6 +241,7 @@ app.post('/api/upload', (req, res) => {
     }
 
     if (!req.file) {
+      console.log('没有上传文件');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
@@ -197,6 +257,7 @@ app.post('/api/upload', (req, res) => {
       }
       
       const base64Image = `data:image/${ext};base64,${base64Data}`;
+      console.log('图片上传成功，生成Base64数据');
       
       // 返回Base64编码的图片
       res.json({ url: base64Image });
@@ -207,12 +268,22 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
-// 数据清理接口 - 用于清理数据库中的无效图片URL
-app.post('/api/cleanup', async (req, res) => {
-  try {
-    // 清理商品数据中的无效图片URL
-    const goods = await Goods.find({});
-    let updatedCount = 0;
-    
-    for (let good of goods) {
-      if (!isBase64Image(good.image)) {
+// 根路径
+app.get('/', (req, res) => {
+  res.json({ message: 'WeChat Mini Program Backend API' });
+});
+
+// 错误处理中间件
+app.use((err, req, res, next) => {
+  console.error('全局错误:', err.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
+});
+
+// 404 处理
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
