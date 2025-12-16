@@ -19,14 +19,13 @@ mongoose.connect(MONGODB_URI, {
   useUnifiedTopology: true,
 });
 
-// 数据库模式
+// 数据库模式 - 商品现在是全局的，不再按用户存储
 const GoodsSchema = new mongoose.Schema({
   id: { type: Number, required: true, unique: true },
   name: { type: String, required: true },
   score: { type: Number, required: true },
   desc: { type: String, required: true },
-  image: { type: String, required: true }, // 现在存储Base64编码的图片
-  openid: { type: String, required: true }, // 按用户存储商品
+  image: { type: String, required: true }, // 存储Base64编码的图片
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -34,7 +33,7 @@ const GoodsSchema = new mongoose.Schema({
 // 配置信息使用全局ID存储
 const ConfigSchema = new mongoose.Schema({
   id: { type: String, default: 'global_config', unique: true }, // 固定ID
-  bannerImage: { type: String, default: "/images/banner.png" }, // 现在存储Base64编码的图片
+  bannerImage: { type: String, default: "/images/banner.png" }, // 存储Base64编码的图片
   bannerTitle: { type: String, default: "萌宠好礼 积分兑换" },
   ruleList: { type: [String], default: [
     "每消费1元可获得1积分，积分永久有效",
@@ -51,15 +50,10 @@ const Config = mongoose.model('Config', ConfigSchema);
 
 // API 路由
 
-// 获取商品列表（按用户）
+// 获取所有商品列表（全局）
 app.get('/api/goods', async (req, res) => {
   try {
-    const { openid } = req.query;
-    if (!openid) {
-      return res.status(400).json({ error: 'Missing openid' });
-    }
-    
-    const goods = await Goods.find({ openid }).sort({ updatedAt: -1 });
+    const goods = await Goods.find().sort({ updatedAt: -1 });
     res.json({ data: goods });
   } catch (error) {
     console.error('获取商品列表失败:', error);
@@ -67,24 +61,17 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表（按用户）
+// 保存商品列表（全局）
 app.post('/api/goods', async (req, res) => {
   try {
-    const { goodsList, openid } = req.body;
-    if (!openid) {
-      return res.status(400).json({ error: 'Missing openid' });
-    }
+    const { goodsList } = req.body;
     
-    // 删除用户现有的商品
-    await Goods.deleteMany({ openid });
+    // 清空所有现有商品
+    await Goods.deleteMany({});
     
     // 批量插入新商品
     if (goodsList && goodsList.length > 0) {
-      const goodsToInsert = goodsList.map(good => ({
-        ...good,
-        openid
-      }));
-      await Goods.insertMany(goodsToInsert);
+      await Goods.insertMany(goodsList);
     }
     
     res.json({ message: 'Goods saved successfully' });
