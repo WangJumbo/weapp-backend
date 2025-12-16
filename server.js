@@ -6,42 +6,19 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 
 // 中间件
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB 连接 - 使用环境变量，如果没有设置则使用本地默认值
+// MongoDB 连接
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/weapp';
-console.log('Connecting to MongoDB:', MONGODB_URI);
-
-// 设置数据库连接选项 - 移除不支持的选项
-const connectDB = async () => {
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 30000, // 等待服务器选择的时间
-    });
-    console.log('MongoDB connected successfully');
-    
-    // 确保初始配置存在
-    const config = await Config.findOne({ id: 'global_config' });
-    if (!config) {
-      const initialConfig = new Config({ id: 'global_config' });
-      await initialConfig.save();
-      console.log('Initial config created with default password: 123456');
-    }
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    process.exit(1); // 连接失败时退出进程
-  }
-};
-
-// 连接数据库
-connectDB();
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
 // 数据库模式
 const GoodsSchema = new mongoose.Schema({
@@ -66,7 +43,6 @@ const ConfigSchema = new mongoose.Schema({
     "商品数量有限，兑完即止，不设退换",
     "最终解释权归喜饼宠物所有"
   ]},
-  adminPassword: { type: String, default: "123456" }, // 管理员密码
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -146,95 +122,41 @@ app.get('/api/config', async (req, res) => {
       await config.save();
     }
     
-    // 只返回需要的配置，不返回密码
-    const { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
-    res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
+    res.json({ data: config });
   } catch (error) {
     console.error('获取配置失败:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// 获取完整配置（包括密码）- 需要管理员权限
-app.post('/api/admin/config', async (req, res) => {
+// 保存全局配置（需要管理员权限，这里简化处理）
+app.post('/api/config', async (req, res) => {
   try {
-    const { adminPwd } = req.body;
+    const { bannerImage, bannerTitle, ruleList } = req.body;
     
-    // 这里可以实现管理员验证逻辑，为简化，我们直接验证密码
-    const config = await Config.findOne({ id: 'global_config' });
-    if (!config) {
-      return res.status(404).json({ error: 'Config not found' });
+    let config = await Config.findOne({ id: 'global_config' });
+    if (config) {
+      // 更新现有配置
+      if (bannerImage !== undefined) config.bannerImage = bannerImage;
+      if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
+      if (ruleList !== undefined) config.ruleList = ruleList;
+      config.updatedAt = new Date();
+      await config.save();
+    } else {
+      // 创建新配置
+      config = new Config({
+        id: 'global_config',
+        bannerImage,
+        bannerTitle,
+        ruleList
+      });
+      await config.save();
     }
-    
-    // 验证管理员密码
-    if (adminPwd !== config.adminPassword) {
-      return res.status(401).json({ error: 'Invalid admin password' });
-    }
-    
-    // 返回完整配置（包括密码）
-    res.json({ data: config });
-  } catch (error) {
-    console.error('获取完整配置失败:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// 保存全局配置（需要管理员权限）
-app.post('/api/admin/config', async (req, res) => {
-  try {
-    const { adminPwd, bannerImage, bannerTitle, ruleList, newAdminPassword } = req.body;
-    
-    // 验证管理员密码
-    const config = await Config.findOne({ id: 'global_config' });
-    if (!config) {
-      return res.status(404).json({ error: 'Config not found' });
-    }
-    
-    if (adminPwd !== config.adminPassword) {
-      return res.status(401).json({ error: 'Invalid admin password' });
-    }
-    
-    // 更新配置
-    if (bannerImage !== undefined) config.bannerImage = bannerImage;
-    if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
-    if (ruleList !== undefined) config.ruleList = ruleList;
-    if (newAdminPassword !== undefined && newAdminPassword.trim() !== '') {
-      config.adminPassword = newAdminPassword;
-    }
-    config.updatedAt = new Date();
-    await config.save();
     
     res.json({ message: 'Config saved successfully' });
   } catch (error) {
     console.error('保存配置失败:', error);
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// 重置密码的特殊端点（仅用于恢复访问）
-app.post('/api/reset-password', async (req, res) => {
-  try {
-    const { secret } = req.body;
-    
-    // 这里使用一个秘密密钥来重置密码（仅在紧急情况下使用）
-    const RESET_SECRET = process.env.RESET_SECRET || 'reset_secret_123456';
-    if (secret !== RESET_SECRET) {
-      return res.status(401).json({ error: 'Invalid reset secret' });
-    }
-    
-    // 重置密码为默认值
-    let config = await Config.findOne({ id: 'global_config' });
-    if (!config) {
-      config = new Config({ id: 'global_config' });
-    }
-    
-    config.adminPassword = '123456'; // 重置为默认密码
-    await config.save();
-    
-    res.json({ message: 'Password reset to default successfully' });
-  } catch (error) {
-    console.error('Password reset failed:', error);
-    res.status(500).json({ error: 'Password reset failed' });
   }
 });
 
@@ -266,17 +188,6 @@ app.use((err, req, res, next) => {
 // 404 处理
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
-});
-
-// 处理未捕获的异常
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
 });
 
 app.listen(PORT, () => {
