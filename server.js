@@ -64,12 +64,11 @@ function cleanImageURL(url) {
 
 // API 路由
 
-// 获取所有商品列表（全局）- 修正：按ID排序以保持顺序
+// 获取所有商品列表（全局）
 app.get('/api/goods', async (req, res) => {
   try {
-    // 修正：按ID排序，确保保持用户自定义顺序
-    const goods = await Goods.find().sort({ createdAt: 1 });
-    // 修正：确保返回的图片都是Base64格式
+    const goods = await Goods.find().sort({ updatedAt: -1 });
+    // 确保返回的图片都是Base64格式，清理无效图片URL
     const processedGoods = goods.map(good => {
       const cleanedGood = good.toObject();
       cleanedGood.image = cleanImageURL(cleanedGood.image);
@@ -82,7 +81,7 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表（全局）- 修正：验证图片格式
+// 保存商品列表（全局）
 app.post('/api/goods', async (req, res) => {
   try {
     const { goodsList } = req.body;
@@ -120,7 +119,7 @@ app.get('/api/config', async (req, res) => {
     
     // 只返回需要的配置，不返回管理相关字段（如果有的话）
     let { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
-    // 修正：确保返回的图片都是Base64格式
+    // 确保返回的图片都是Base64格式
     bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
     
     res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
@@ -130,7 +129,7 @@ app.get('/api/config', async (req, res) => {
   }
 });
 
-// 保存全局配置（需要管理员权限，这里简化处理）
+// 保存全局配置
 app.post('/api/config', async (req, res) => {
   try {
     const { bannerImage, bannerTitle, ruleList } = req.body;
@@ -138,8 +137,10 @@ app.post('/api/config', async (req, res) => {
     let config = await Config.findOne({ id: 'global_config' });
     if (config) {
       // 更新现有配置
-      // 修正：确保图片是Base64格式
-      if (bannerImage !== undefined) config.bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
+      if (bannerImage !== undefined) {
+        // 确保图片是Base64格式
+        config.bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
+      }
       if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
       if (ruleList !== undefined) config.ruleList = ruleList;
       config.updatedAt = new Date();
@@ -184,32 +185,34 @@ app.post('/api/upload', (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // 将上传的文件转换为Base64编码
-    const base64Data = req.file.buffer.toString('base64');
-    const ext = path.extname(req.file.originalname).substring(1);
-    const base64Image = `data:image/${ext};base64,${base64Data}`;
-    
-    // 返回Base64编码的图片
-    res.json({ url: base64Image });
+    try {
+      // 将上传的文件转换为Base64编码
+      const base64Data = req.file.buffer.toString('base64');
+      const ext = path.extname(req.file.originalname).substring(1);
+      
+      // 验证文件类型
+      const allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+      if (!allowedTypes.includes(ext.toLowerCase())) {
+        return res.status(400).json({ error: 'Invalid file type' });
+      }
+      
+      const base64Image = `data:image/${ext};base64,${base64Data}`;
+      
+      // 返回Base64编码的图片
+      res.json({ url: base64Image });
+    } catch (error) {
+      console.error('Error converting file to base64:', error);
+      res.status(500).json({ error: 'Error processing image' });
+    }
   });
 });
 
-// 根路径
-app.get('/', (req, res) => {
-  res.json({ message: 'WeChat Mini Program Backend API' });
-});
-
-// 错误处理中间件
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// 404 处理
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// 数据清理接口 - 用于清理数据库中的无效图片URL
+app.post('/api/cleanup', async (req, res) => {
+  try {
+    // 清理商品数据中的无效图片URL
+    const goods = await Goods.find({});
+    let updatedCount = 0;
+    
+    for (let good of goods) {
+      if (!isBase64Image(good.image)) {
