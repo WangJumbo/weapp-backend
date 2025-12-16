@@ -7,9 +7,8 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// 中间件 - 大幅增加请求体大小限制
+// 中间件 - 增加请求体大小限制
 app.use(cors());
-// 设置更大的请求体限制，比如50MB，以应对大量商品包含图片的情况
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -87,7 +86,7 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表（全局）
+// 保存商品列表（全局）- 移除事务逻辑
 app.post('/api/goods', async (req, res) => {
   try {
     console.log('收到保存商品列表请求');
@@ -100,30 +99,25 @@ app.post('/api/goods', async (req, res) => {
     
     console.log(`准备保存 ${goodsList.length} 个商品`);
     
-    // 开启事务以确保数据一致性
-    const session = await mongoose.startSession();
-    await session.withTransaction(async () => {
-      // 清空所有现有商品
-      const deleteResult = await Goods.deleteMany({}, { session });
-      console.log(`删除了 ${deleteResult.deletedCount} 个旧商品`);
+    // 清空所有现有商品
+    const deleteResult = await Goods.deleteMany({});
+    console.log(`删除了 ${deleteResult.deletedCount} 个旧商品`);
+    
+    // 批量插入新商品，确保图片是Base64格式
+    if (goodsList && goodsList.length > 0) {
+      const processedGoodsList = goodsList.map(good => ({
+        id: good.id,
+        name: good.name,
+        score: good.score,
+        desc: good.desc,
+        image: isBase64Image(good.image) ? good.image : cleanImageURL(good.image),
+        createdAt: good.createdAt || new Date(),
+        updatedAt: new Date()
+      }));
       
-      // 批量插入新商品，确保图片是Base64格式
-      if (goodsList && goodsList.length > 0) {
-        const processedGoodsList = goodsList.map(good => ({
-          id: good.id,
-          name: good.name,
-          score: good.score,
-          desc: good.desc,
-          image: isBase64Image(good.image) ? good.image : cleanImageURL(good.image),
-          createdAt: good.createdAt || new Date(),
-          updatedAt: new Date()
-        }));
-        
-        const insertResult = await Goods.insertMany(processedGoodsList, { session });
-        console.log(`成功插入 ${insertResult.length} 个新商品`);
-      }
-    });
-    await session.endSession();
+      const insertResult = await Goods.insertMany(processedGoodsList);
+      console.log(`成功插入 ${insertResult.length} 个新商品`);
+    }
     
     console.log('商品列表保存完成');
     res.json({ message: 'Goods saved successfully' });
