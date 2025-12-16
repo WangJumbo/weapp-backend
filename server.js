@@ -13,22 +13,27 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB 连接
+// MongoDB 连接 - 使用环境变量，如果没有设置则使用本地默认值
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/weapp';
 console.log('Connecting to MongoDB:', MONGODB_URI);
 
-// 设置数据库连接选项
+// 设置数据库连接选项 - 移除不支持的选项
 const connectDB = async () => {
   try {
     await mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      // 如果使用MongoDB Atlas，可能需要这些额外选项
       serverSelectionTimeoutMS: 30000, // 等待服务器选择的时间
-      bufferCommands: false, // 禁用缓冲命令
-      bufferMaxEntries: 0, // 禁用缓冲
     });
     console.log('MongoDB connected successfully');
+    
+    // 确保初始配置存在
+    const config = await Config.findOne({ id: 'global_config' });
+    if (!config) {
+      const initialConfig = new Config({ id: 'global_config' });
+      await initialConfig.save();
+      console.log('Initial config created with default password: 123456');
+    }
   } catch (error) {
     console.error('MongoDB connection error:', error);
     process.exit(1); // 连接失败时退出进程
@@ -203,6 +208,33 @@ app.post('/api/admin/config', async (req, res) => {
   } catch (error) {
     console.error('保存配置失败:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 重置密码的特殊端点（仅用于恢复访问）
+app.post('/api/reset-password', async (req, res) => {
+  try {
+    const { secret } = req.body;
+    
+    // 这里使用一个秘密密钥来重置密码（仅在紧急情况下使用）
+    const RESET_SECRET = process.env.RESET_SECRET || 'reset_secret_123456';
+    if (secret !== RESET_SECRET) {
+      return res.status(401).json({ error: 'Invalid reset secret' });
+    }
+    
+    // 重置密码为默认值
+    let config = await Config.findOne({ id: 'global_config' });
+    if (!config) {
+      config = new Config({ id: 'global_config' });
+    }
+    
+    config.adminPassword = '123456'; // 重置为默认密码
+    await config.save();
+    
+    res.json({ message: 'Password reset to default successfully' });
+  } catch (error) {
+    console.error('Password reset failed:', error);
+    res.status(500).json({ error: 'Password reset failed' });
   }
 });
 
