@@ -3,10 +3,9 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // 中间件
 app.use(cors());
@@ -26,7 +25,7 @@ const GoodsSchema = new mongoose.Schema({
   name: { type: String, required: true },
   score: { type: Number, required: true },
   desc: { type: String, required: true },
-  image: { type: String, required: true },
+  image: { type: String, required: true }, // 现在存储Base64编码的图片
   openid: { type: String, required: true }, // 按用户存储商品
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -35,7 +34,7 @@ const GoodsSchema = new mongoose.Schema({
 // 配置信息使用全局ID存储
 const ConfigSchema = new mongoose.Schema({
   id: { type: String, default: 'global_config', unique: true }, // 固定ID
-  bannerImage: { type: String, default: "/images/banner.png" },
+  bannerImage: { type: String, default: "/images/banner.png" }, // 现在存储Base64编码的图片
   bannerTitle: { type: String, default: "萌宠好礼 积分兑换" },
   ruleList: { type: [String], default: [
     "每消费1元可获得1积分，积分永久有效",
@@ -49,22 +48,6 @@ const ConfigSchema = new mongoose.Schema({
 
 const Goods = mongoose.model('Goods', GoodsSchema);
 const Config = mongoose.model('Config', ConfigSchema);
-
-// Multer 配置用于文件上传
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
-const upload = multer({ storage: storage });
 
 // API 路由
 
@@ -122,7 +105,9 @@ app.get('/api/config', async (req, res) => {
       await config.save();
     }
     
-    res.json({ data: config });
+    // 只返回需要的配置，不返回管理相关字段（如果有的话）
+    const { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
+    res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
   } catch (error) {
     console.error('获取配置失败:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -160,19 +145,37 @@ app.post('/api/config', async (req, res) => {
   }
 });
 
-// 图片上传
-app.post('/api/upload', upload.single('image'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+// 图片上传 - 现在将图片转换为Base64存储
+app.post('/api/upload', (req, res) => {
+  // 检查是否有文件上传
+  if (!req.headers['content-type'] || !req.headers['content-type'].startsWith('multipart/form-data')) {
+    return res.status(400).json({ error: 'Please upload as form data' });
   }
-  
-  // 返回文件访问路径
-  const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  res.json({ url: imageUrl });
-});
 
-// 提供上传文件的静态访问
-app.use('/uploads', express.static('uploads'));
+  // 使用multer中间件处理文件上传
+  const upload = multer({ 
+    limits: { fileSize: 5 * 1024 * 1024 } // 限制文件大小为5MB
+  }).single('image');
+
+  upload(req, res, (err) => {
+    if (err) {
+      console.error('File upload error:', err);
+      return res.status(500).json({ error: 'File upload error' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // 将上传的文件转换为Base64编码
+    const base64Data = req.file.buffer.toString('base64');
+    const ext = path.extname(req.file.originalname).substring(1);
+    const base64Image = `data:image/${ext};base64,${base64Data}`;
+    
+    // 返回Base64编码的图片
+    res.json({ url: base64Image });
+  });
+});
 
 // 根路径
 app.get('/', (req, res) => {
