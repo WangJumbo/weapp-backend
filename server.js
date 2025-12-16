@@ -6,39 +6,31 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 8080; // Zeabur 通常使用 8080 端口
+const PORT = process.env.PORT || 3000;
 
 // 中间件
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB 连接
-const MONGODB_URI = process.env.MONGODB_URI;
+// MongoDB 连接 - 优先使用 Zeabur 自动注入的环境变量
+const MONGODB_URI = 
+  process.env.MONGODB_URI || 
+  process.env.MONGO_CONNECTION_STRING || 
+  process.env.MONGODB_URL || 
+  'mongodb://localhost:27017/weapp';
 
-if (!MONGODB_URI) {
-  console.error('错误: 未设置 MONGODB_URI 环境变量');
-  process.exit(1);
-}
+console.log('MongoDB URI:', MONGODB_URI); // 调试日志
 
-// 验证连接字符串格式
-if (!MONGODB_URI.startsWith('mongodb://') && !MONGODB_URI.startsWith('mongodb+srv://')) {
-  console.error('错误: MongoDB 连接字符串格式不正确，必须以 mongodb:// 或 mongodb+srv:// 开头');
-  console.error('当前值:', MONGODB_URI);
-  process.exit(1);
-}
-
-// 连接数据库
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
 .then(() => {
-  console.log('成功连接到 MongoDB 数据库');
+  console.log('MongoDB 连接成功');
 })
 .catch(err => {
-  console.error('连接 MongoDB 数据库失败:', err);
-  process.exit(1);
+  console.error('MongoDB 连接失败:', err);
 });
 
 // 数据库模式
