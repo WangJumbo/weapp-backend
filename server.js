@@ -48,20 +48,41 @@ const ConfigSchema = new mongoose.Schema({
 const Goods = mongoose.model('Goods', GoodsSchema);
 const Config = mongoose.model('Config', ConfigSchema);
 
+// 辅助函数：验证是否为Base64图片格式
+function isBase64Image(str) {
+  return typeof str === 'string' && str.startsWith('data:image/');
+}
+
+// 辅助函数：清理非Base64格式的图片URL
+function cleanImageURL(url) {
+  if (isBase64Image(url)) {
+    return url; // 已经是Base64格式，直接返回
+  }
+  // 如果不是Base64格式，返回默认图片
+  return "/images/goods/default_goods.png";
+}
+
 // API 路由
 
-// 获取所有商品列表（全局）
+// 获取所有商品列表（全局）- 修正：按ID排序以保持顺序
 app.get('/api/goods', async (req, res) => {
   try {
-    const goods = await Goods.find().sort({ updatedAt: -1 });
-    res.json({ data: goods });
+    // 修正：按ID排序，确保保持用户自定义顺序
+    const goods = await Goods.find().sort({ createdAt: 1 });
+    // 修正：确保返回的图片都是Base64格式
+    const processedGoods = goods.map(good => {
+      const cleanedGood = good.toObject();
+      cleanedGood.image = cleanImageURL(cleanedGood.image);
+      return cleanedGood;
+    });
+    res.json({ data: processedGoods });
   } catch (error) {
     console.error('获取商品列表失败:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// 保存商品列表（全局）
+// 保存商品列表（全局）- 修正：验证图片格式
 app.post('/api/goods', async (req, res) => {
   try {
     const { goodsList } = req.body;
@@ -69,9 +90,14 @@ app.post('/api/goods', async (req, res) => {
     // 清空所有现有商品
     await Goods.deleteMany({});
     
-    // 批量插入新商品
+    // 批量插入新商品，确保图片是Base64格式
     if (goodsList && goodsList.length > 0) {
-      await Goods.insertMany(goodsList);
+      const processedGoodsList = goodsList.map(good => ({
+        ...good,
+        image: isBase64Image(good.image) ? good.image : cleanImageURL(good.image),
+        updatedAt: new Date()
+      }));
+      await Goods.insertMany(processedGoodsList);
     }
     
     res.json({ message: 'Goods saved successfully' });
@@ -93,7 +119,10 @@ app.get('/api/config', async (req, res) => {
     }
     
     // 只返回需要的配置，不返回管理相关字段（如果有的话）
-    const { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
+    let { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
+    // 修正：确保返回的图片都是Base64格式
+    bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
+    
     res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
   } catch (error) {
     console.error('获取配置失败:', error);
@@ -109,7 +138,8 @@ app.post('/api/config', async (req, res) => {
     let config = await Config.findOne({ id: 'global_config' });
     if (config) {
       // 更新现有配置
-      if (bannerImage !== undefined) config.bannerImage = bannerImage;
+      // 修正：确保图片是Base64格式
+      if (bannerImage !== undefined) config.bannerImage = isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage);
       if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
       if (ruleList !== undefined) config.ruleList = ruleList;
       config.updatedAt = new Date();
@@ -118,7 +148,7 @@ app.post('/api/config', async (req, res) => {
       // 创建新配置
       config = new Config({
         id: 'global_config',
-        bannerImage,
+        bannerImage: isBase64Image(bannerImage) ? bannerImage : cleanImageURL(bannerImage),
         bannerTitle,
         ruleList
       });
