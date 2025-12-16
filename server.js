@@ -13,24 +13,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB 连接 - 优先使用 Zeabur 自动注入的环境变量
-const MONGODB_URI = 
-  process.env.MONGODB_URI || 
-  process.env.MONGO_CONNECTION_STRING || 
-  process.env.MONGODB_URL || 
-  'mongodb://localhost:27017/weapp';
-
-console.log('MongoDB URI:', MONGODB_URI); // 调试日志
-
+// MongoDB 连接
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/weapp';
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-})
-.then(() => {
-  console.log('MongoDB 连接成功');
-})
-.catch(err => {
-  console.error('MongoDB 连接失败:', err);
 });
 
 // 数据库模式
@@ -40,13 +27,14 @@ const GoodsSchema = new mongoose.Schema({
   score: { type: Number, required: true },
   desc: { type: String, required: true },
   image: { type: String, required: true },
-  openid: { type: String, required: true }, // 模拟微信用户ID
+  openid: { type: String, required: true }, // 按用户存储商品
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
 
+// 配置信息使用全局ID存储
 const ConfigSchema = new mongoose.Schema({
-  openid: { type: String, required: true, unique: true },
+  id: { type: String, default: 'global_config', unique: true }, // 固定ID
   bannerImage: { type: String, default: "/images/banner.png" },
   bannerTitle: { type: String, default: "萌宠好礼 积分兑换" },
   ruleList: { type: [String], default: [
@@ -80,7 +68,7 @@ const upload = multer({ storage: storage });
 
 // API 路由
 
-// 获取商品列表
+// 获取商品列表（按用户）
 app.get('/api/goods', async (req, res) => {
   try {
     const { openid } = req.query;
@@ -96,7 +84,7 @@ app.get('/api/goods', async (req, res) => {
   }
 });
 
-// 保存商品列表
+// 保存商品列表（按用户）
 app.post('/api/goods', async (req, res) => {
   try {
     const { goodsList, openid } = req.body;
@@ -123,18 +111,14 @@ app.post('/api/goods', async (req, res) => {
   }
 });
 
-// 获取配置
+// 获取全局配置
 app.get('/api/config', async (req, res) => {
   try {
-    const { openid } = req.query;
-    if (!openid) {
-      return res.status(400).json({ error: 'Missing openid' });
-    }
-    
-    let config = await Config.findOne({ openid });
+    // 不需要openid，获取全局配置
+    let config = await Config.findOne({ id: 'global_config' });
     if (!config) {
-      // 如果没有配置，则创建默认配置
-      config = new Config({ openid });
+      // 如果没有全局配置，则创建默认配置
+      config = new Config({ id: 'global_config' });
       await config.save();
     }
     
@@ -145,23 +129,27 @@ app.get('/api/config', async (req, res) => {
   }
 });
 
-// 保存配置
+// 保存全局配置（需要管理员权限，这里简化处理）
 app.post('/api/config', async (req, res) => {
   try {
-    const { openid, ...configData } = req.body;
-    if (!openid) {
-      return res.status(400).json({ error: 'Missing openid' });
-    }
+    const { bannerImage, bannerTitle, ruleList } = req.body;
     
-    let config = await Config.findOne({ openid });
+    let config = await Config.findOne({ id: 'global_config' });
     if (config) {
       // 更新现有配置
-      Object.assign(config, configData);
+      if (bannerImage !== undefined) config.bannerImage = bannerImage;
+      if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
+      if (ruleList !== undefined) config.ruleList = ruleList;
       config.updatedAt = new Date();
       await config.save();
     } else {
       // 创建新配置
-      config = new Config({ ...configData, openid });
+      config = new Config({
+        id: 'global_config',
+        bannerImage,
+        bannerTitle,
+        ruleList
+      });
       await config.save();
     }
     
