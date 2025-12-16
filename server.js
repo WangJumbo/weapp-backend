@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // 中间件
 app.use(cors());
@@ -15,10 +15,28 @@ app.use(express.urlencoded({ extended: true }));
 
 // MongoDB 连接
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/weapp';
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+console.log('Connecting to MongoDB:', MONGODB_URI);
+
+// 设置数据库连接选项
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      // 如果使用MongoDB Atlas，可能需要这些额外选项
+      serverSelectionTimeoutMS: 30000, // 等待服务器选择的时间
+      bufferCommands: false, // 禁用缓冲命令
+      bufferMaxEntries: 0, // 禁用缓冲
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection error:', error);
+    process.exit(1); // 连接失败时退出进程
+  }
+};
+
+// 连接数据库
+connectDB();
 
 // 数据库模式
 const GoodsSchema = new mongoose.Schema({
@@ -216,6 +234,17 @@ app.use((err, req, res, next) => {
 // 404 处理
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
+});
+
+// 处理未捕获的异常
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 app.listen(PORT, () => {
