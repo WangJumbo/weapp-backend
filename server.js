@@ -43,6 +43,7 @@ const ConfigSchema = new mongoose.Schema({
     "商品数量有限，兑完即止，不设退换",
     "最终解释权归喜饼宠物所有"
   ]},
+  adminPassword: { type: String, default: "123456" }, // 管理员密码
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -122,36 +123,63 @@ app.get('/api/config', async (req, res) => {
       await config.save();
     }
     
-    res.json({ data: config });
+    // 只返回需要的配置，不返回密码
+    const { bannerImage, bannerTitle, ruleList, updatedAt } = config.toObject();
+    res.json({ data: { bannerImage, bannerTitle, ruleList, updatedAt } });
   } catch (error) {
     console.error('获取配置失败:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// 保存全局配置（需要管理员权限，这里简化处理）
-app.post('/api/config', async (req, res) => {
+// 获取完整配置（包括密码）- 需要管理员权限
+app.post('/api/admin/config', async (req, res) => {
   try {
-    const { bannerImage, bannerTitle, ruleList } = req.body;
+    const { adminPwd } = req.body;
     
-    let config = await Config.findOne({ id: 'global_config' });
-    if (config) {
-      // 更新现有配置
-      if (bannerImage !== undefined) config.bannerImage = bannerImage;
-      if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
-      if (ruleList !== undefined) config.ruleList = ruleList;
-      config.updatedAt = new Date();
-      await config.save();
-    } else {
-      // 创建新配置
-      config = new Config({
-        id: 'global_config',
-        bannerImage,
-        bannerTitle,
-        ruleList
-      });
-      await config.save();
+    // 这里可以实现管理员验证逻辑，为简化，我们直接验证密码
+    const config = await Config.findOne({ id: 'global_config' });
+    if (!config) {
+      return res.status(404).json({ error: 'Config not found' });
     }
+    
+    // 验证管理员密码
+    if (adminPwd !== config.adminPassword) {
+      return res.status(401).json({ error: 'Invalid admin password' });
+    }
+    
+    // 返回完整配置（包括密码）
+    res.json({ data: config });
+  } catch (error) {
+    console.error('获取完整配置失败:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 保存全局配置（需要管理员权限）
+app.post('/api/admin/config', async (req, res) => {
+  try {
+    const { adminPwd, bannerImage, bannerTitle, ruleList, newAdminPassword } = req.body;
+    
+    // 验证管理员密码
+    const config = await Config.findOne({ id: 'global_config' });
+    if (!config) {
+      return res.status(404).json({ error: 'Config not found' });
+    }
+    
+    if (adminPwd !== config.adminPassword) {
+      return res.status(401).json({ error: 'Invalid admin password' });
+    }
+    
+    // 更新配置
+    if (bannerImage !== undefined) config.bannerImage = bannerImage;
+    if (bannerTitle !== undefined) config.bannerTitle = bannerTitle;
+    if (ruleList !== undefined) config.ruleList = ruleList;
+    if (newAdminPassword !== undefined && newAdminPassword.trim() !== '') {
+      config.adminPassword = newAdminPassword;
+    }
+    config.updatedAt = new Date();
+    await config.save();
     
     res.json({ message: 'Config saved successfully' });
   } catch (error) {
